@@ -28,7 +28,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void onClick(View v) {
-        Intent intent = new Intent(this, SecondActivity.class);
-        startActivity(intent);
+        if (v.getId() == R.id.start_bt) {
+            Button btn = (Button) findViewById(R.id.start_bt);
+            btn.setText(R.string.start_bt);
+            Intent intent = new Intent(this, SecondActivity.class);
+            startActivity(intent);
+
+        }
     }
 }
