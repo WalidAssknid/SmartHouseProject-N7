@@ -95,19 +95,20 @@ public class SecondActivity extends AppCompatActivity {
 
     private void handleBluetoothMessage(String message) {
         try {
+            String cleanMessage = message.trim();
             if (MainActivity.isServer) {
                 // Le serveur reçoit une commande du client (ex: "TOGGLE:id")
-                if (message.startsWith("TOGGLE:")) {
-                    int deviceIdToToggle = Integer.parseInt(message.substring(7));
-                    toggleDevice(deviceIdToToggle, false); // On passera true/false si besoin, ou on laisse l'API gérer
+                if (cleanMessage.startsWith("TOGGLE:")) {
+                    int deviceIdToToggle = Integer.parseInt(cleanMessage.substring(7));
+                    toggleDevice(deviceIdToToggle, false);
                 }
             } else {
-                // Le client reçoit les données JSON du serveur
-                JSONArray response = new JSONArray(message);
-                updateUI(response);
+                // Le client reçoit les données JSON complètes du serveur
+                JSONArray response = new JSONArray(cleanMessage);
+                runOnUiThread(() -> updateUI(response));
             }
         } catch (Exception e) {
-            Log.e(TAG, "Erreur traitement message BT: " + message, e);
+            Log.e(TAG, "Erreur JSON/BT: " + e.getMessage());
         }
     }
 
@@ -134,9 +135,10 @@ public class SecondActivity extends AppCompatActivity {
         JsonArrayRequest jsonArrayRequest = new JsonArrayRequest(Request.Method.GET, requestUrl, null,
                 response -> {
                     updateUI(response);
-                    // Envoyer les données au client via Bluetooth
+                    // Envoyer les données au client via Bluetooth avec un délimiteur
                     if (bluetoothThread != null) {
-                        bluetoothThread.write(response.toString().getBytes(StandardCharsets.UTF_8));
+                        String dataToSend = response.toString() + "\n";
+                        bluetoothThread.write(dataToSend.getBytes(StandardCharsets.UTF_8));
                     }
                 }, this::handleError);
         queue.add(jsonArrayRequest);
@@ -166,19 +168,21 @@ public class SecondActivity extends AppCompatActivity {
     }
 
     private void handleError(com.android.volley.VolleyError error) {
-        Log.e(TAG, "Volley Error");
+        String errMsg = "Erreur API";
+        if (error.networkResponse != null) errMsg += " (" + error.networkResponse.statusCode + ")";
+        Toast.makeText(this, errMsg, Toast.LENGTH_SHORT).show();
+        Log.e(TAG, "Volley Error: " + error.getMessage());
     }
 
     public View createDeviceView(int id, String brand, String model, String name, int autonomy, String data, boolean status) {
         LinearLayout outerLayout = new LinearLayout(this);
-        // ... (Même style que précédemment)
         LinearLayout.LayoutParams outerParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        outerParams.setMargins(0, 0, 0, 12);
+        outerParams.setMargins(0, 0, 0, 16);
         outerLayout.setLayoutParams(outerParams);
         outerLayout.setOrientation(LinearLayout.HORIZONTAL);
-        outerLayout.setBackgroundColor(Color.parseColor("#E0E0E0"));
-        outerLayout.setPadding(24, 24, 24, 24);
+        outerLayout.setBackgroundColor(Color.parseColor("#F5F5F5"));
+        outerLayout.setPadding(32, 32, 32, 32);
         outerLayout.setGravity(Gravity.CENTER_VERTICAL);
 
         LinearLayout textLayout = new LinearLayout(this);
@@ -188,35 +192,33 @@ public class SecondActivity extends AppCompatActivity {
         TextView titleTextView = new TextView(this);
         String title = (brand.isEmpty() && model.isEmpty()) ? name : "[" + brand + "-" + model + "] " + name;
         titleTextView.setText(title);
-        titleTextView.setTextSize(16);
-        titleTextView.setTextColor(Color.DKGRAY);
+        titleTextView.setTextSize(18);
+        titleTextView.setTextColor(Color.BLACK);
         titleTextView.setTypeface(null, Typeface.BOLD);
 
         TextView infoTextView = new TextView(this);
-        infoTextView.setText("Autonomy : " + (autonomy == -1 ? "N/A" : autonomy + "%") + " Data : " + data);
+        infoTextView.setText("Autonomy: " + (autonomy == -1 ? "N/A" : autonomy + "%") + " | Data: " + data);
         infoTextView.setTextSize(14);
-        infoTextView.setTextColor(Color.GRAY);
+        infoTextView.setTextColor(Color.DKGRAY);
 
         textLayout.addView(titleTextView);
         textLayout.addView(infoTextView);
 
         Button button = new Button(this);
         button.setText(status ? "ON" : "OFF");
-        button.setBackgroundColor(status ? Color.parseColor("#4CAF50") : Color.LTGRAY);
-        button.setTextColor(status ? Color.WHITE : Color.BLACK);
+        button.setBackgroundColor(status ? Color.parseColor("#4CAF50") : Color.parseColor("#9E9E9E"));
+        button.setTextColor(Color.WHITE);
         
-        // Si on est le serveur, les boutons ne sont pas cliquables selon le sujet
-        if (MainActivity.isServer) {
-            button.setEnabled(false);
-        } else {
-            button.setOnClickListener(v -> {
-                // Le client envoie une commande au serveur via Bluetooth
-                String cmd = "TOGGLE:" + id;
+        button.setOnClickListener(v -> {
+            if (MainActivity.isServer) {
+                toggleDevice(id, status);
+            } else {
+                String cmd = "TOGGLE:" + id + "\n";
                 if (bluetoothThread != null) {
                     bluetoothThread.write(cmd.getBytes(StandardCharsets.UTF_8));
                 }
-            });
-        }
+            }
+        });
 
         outerLayout.addView(textLayout);
         outerLayout.addView(button);
@@ -263,13 +265,22 @@ public class SecondActivity extends AppCompatActivity {
         }
 
         public void run() {
-            byte[] buffer = new byte[4096];
+            byte[] buffer = new byte[1024];
             int bytes;
+            StringBuilder sb = new StringBuilder();
             while (true) {
                 try {
                     bytes = mmInStream.read(buffer);
-                    String incomingMessage = new String(buffer, 0, bytes);
-                    bluetoothHandler.obtainMessage(1, incomingMessage).sendToTarget();
+                    String part = new String(buffer, 0, bytes, StandardCharsets.UTF_8);
+                    sb.append(part);
+                    
+                    int index;
+                    // Traitement des messages terminés par un saut de ligne
+                    while ((index = sb.indexOf("\n")) != -1) {
+                        String fullMessage = sb.substring(0, index);
+                        sb.delete(0, index + 1);
+                        bluetoothHandler.obtainMessage(1, fullMessage).sendToTarget();
+                    }
                 } catch (IOException e) {
                     Log.d(TAG, "Socket déconnecté");
                     break;

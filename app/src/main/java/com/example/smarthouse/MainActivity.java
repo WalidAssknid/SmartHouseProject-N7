@@ -133,11 +133,12 @@ public class MainActivity extends AppCompatActivity {
         
         try {
             Set<BluetoothDevice> pairedDevices = bluetoothAdapter.getBondedDevices();
-            if (pairedDevices != null && pairedDevices.size() > 0) {
-                for (BluetoothDevice device : pairedDevices) {
-                    new ConnectThread(device).start();
-                    break;
-                }
+            if (pairedDevices != null && !pairedDevices.isEmpty()) {
+                // Pour simplifier, on prend le premier appareil appairé. 
+                // Assurez-vous que seul le serveur est appairé ou qu'il est le premier.
+                BluetoothDevice targetDevice = pairedDevices.iterator().next();
+                Toast.makeText(this, "Connexion à : " + targetDevice.getName(), Toast.LENGTH_SHORT).show();
+                new ConnectThread(targetDevice).start();
             } else {
                 Toast.makeText(this, "Aucun appareil appairé trouvé", Toast.LENGTH_SHORT).show();
                 resetUI();
